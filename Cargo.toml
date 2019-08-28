@@ -1,0 +1,15 @@
+[package]
+name = "tueba-corefs"
+version = "0.1.0"
+authors = ["Sebastian Puetz <sebastian.puetz@student.uni-tuebingen.de>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+lumberjack = { git = "https://github.com/sebpuetz/lumberjack", rev="d91d23ed64d5fcb553f12cd7ba98eb0b100eaf1b"}
+petgraph = "0.4.12"
+itertools = "0.8"
+conllx = "0.11"
+getopts = "0.2"
+stdinout = "0.4"
