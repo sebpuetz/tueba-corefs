@@ -1,13 +1,14 @@
-use conllx::io::Writer;
-use getopts::Options;
-use lumberjack::{NegraReader, Tree, WriteTree};
-use petgraph::prelude::NodeIndex;
-use petgraph::visit::VisitMap;
-use petgraph::visit::Visitable;
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::{env, process};
+
+use conllx::io::Writer;
+use getopts::Options;
+use itertools::Itertools;
+use lumberjack::{NegraReader, Tree, WriteTree};
+use petgraph::prelude::NodeIndex;
+use petgraph::visit::{VisitMap, Visitable};
 use stdinout::OrExit;
 
 fn print_usage(program: &str, opts: Options) {
@@ -37,6 +38,7 @@ fn main() {
     let reader = BufReader::new(input);
     let output = File::create(output_path).or_exit("Can't open output file.", 1);
 
+    // collect trees from corpus and get mapping from negra_id to node_idx
     let (id_maps, mut sentences) = NegraReader::new(reader).fold(
         (Vec::new(), Vec::new()),
         |(mut id_maps, mut sentences), t| {
@@ -48,7 +50,8 @@ fn main() {
     );
 
     for i in 0..sentences.len() {
-        for nt in sentences[i].nonterminals().collect::<Vec<_>>() {
+        for nt in sentences[i].graph().node_indices().collect::<Vec<_>>() {
+            // only nodes with comments can have coref annotations
             let comment = if let Some(Some(comment)) = sentences[i][nt]
                 .features()
                 .and_then(|f| f.get_val("comment"))
@@ -59,6 +62,7 @@ fn main() {
             };
 
             for part in comment.split_whitespace() {
+                // comments also contain annotations for anaphora, typos etc.
                 let (sent_id, corefs) = if part.contains("R=coreferential") {
                     let mut coref_parts = part.split('.');
                     coref_parts.next().expect("malformed coref");
@@ -73,6 +77,7 @@ fn main() {
                         process::exit(1);
                     }
                     let sentence_id = sentence_and_node[0].parse::<usize>().unwrap() - 1;
+                    // map negra_id to node_idx
                     let negra_id = sentence_and_node[1];
                     let nt_id = *id_maps[sentence_id].get(negra_id).or_exit(
                         &format!(
@@ -81,11 +86,12 @@ fn main() {
                         ),
                         1,
                     );
+
                     let spanned_tokens = sentences[sentence_id][nt_id]
                         .span()
                         .into_iter()
                         .map(|idx| idx.to_string())
-                        .collect::<Vec<_>>();
+                        .join(",");
                     (sentence_id, spanned_tokens)
                 } else {
                     continue;
@@ -98,14 +104,11 @@ fn main() {
                         let coref = coref.or_exit("Missing coref feature", 1);
                         // save to slice, last idx is "]"
                         let coref = &coref[..coref.len() - 1];
-                        let new_coref = format!("({},[{}])]", sent_id, corefs.join(","));
+                        let new_coref = format!("({},[{}])]", sent_id, corefs);
                         // insert concatenated corefs
                         features.insert("coref", Some(format!("{},{}", coref, new_coref)));
                     } else {
-                        features.insert(
-                            "coref",
-                            Some(format!("[({},[{}])]", sent_id, corefs.join(","))),
-                        );
+                        features.insert("coref", Some(format!("[({},[{}])]", sent_id, corefs)));
                     }
                 }
             }
