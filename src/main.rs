@@ -37,7 +37,7 @@ fn main() {
     let reader = BufReader::new(input);
     let output = File::create(output_path).or_exit("Can't open output file.", 1);
 
-    let (id_maps, mut sentences) = NegraReader::new(reader).into_iter().fold(
+    let (id_maps, mut sentences) = NegraReader::new(reader).fold(
         (Vec::new(), Vec::new()),
         |(mut id_maps, mut sentences), t| {
             let mut t = t.or_exit("Failed to read tree.", 1);
@@ -65,8 +65,28 @@ fn main() {
 
                     let sentence_and_node = coref_parts
                         .next()
-                        .or_exit("Missing sentence id and node id for coref", 1);
-                    resolve_id(&sentences, &id_maps, sentence_and_node)
+                        .or_exit("Missing sentence id and node id for coref", 1)
+                        .split(':')
+                        .collect::<Vec<_>>();
+                    if sentence_and_node.len() != 2 {
+                        eprintln!("Coreference annotation is expected to be sentence_id:node_id");
+                        process::exit(1);
+                    }
+                    let sentence_id = sentence_and_node[0].parse::<usize>().unwrap() - 1;
+                    let negra_id = sentence_and_node[1];
+                    let nt_id = *id_maps[sentence_id].get(negra_id).or_exit(
+                        &format!(
+                            "No entry for node id {}  in sentence {}.",
+                            negra_id, sentence_id
+                        ),
+                        1,
+                    );
+                    let spanned_tokens = sentences[sentence_id][nt_id]
+                        .span()
+                        .into_iter()
+                        .map(|idx| idx.to_string())
+                        .collect::<Vec<_>>();
+                    (sentence_id, spanned_tokens)
                 } else {
                     continue;
                 };
@@ -96,48 +116,14 @@ fn main() {
     for mut tree in sentences {
         let terminals = tree.terminals().collect::<Vec<_>>();
         for terminal in terminals {
-            // remove auxiliary ids
-            tree[terminal].features_mut().remove("id").unwrap().unwrap();
             if !keep {
                 tree[terminal].features_mut().remove("comment");
             }
         }
-        writer.write_tree(&tree).unwrap();
+        writer
+            .write_tree(&tree)
+            .or_exit("Unable to write sentence.", 1);
     }
-}
-
-fn resolve_id(
-    sentences: &[Tree],
-    id_maps: &[HashMap<String, NodeIndex>],
-    sentence_and_node: &str,
-) -> (String, Vec<String>) {
-    let parts = sentence_and_node.split(":").collect::<Vec<_>>();
-    if parts.len() != 2 {
-        eprintln!("Coreference annotation is expected to be sentence_id:node_id");
-        process::exit(1);
-    }
-    let sentence_id = parts[0].parse::<usize>().expect("Can't parse sentence_id") - 1;
-    let nt_id = *id_maps[sentence_id].get(parts[1]).or_exit(
-        &format!(
-            "No entry for node id {}  in sentence {}.",
-            sentence_id, parts[1]
-        ),
-        1,
-    );
-    let mut term_ids = Vec::new();
-    for descendent in sentences[sentence_id]
-        .descendent_terminals(nt_id)
-        .collect::<Vec<_>>()
-    {
-        let id = sentences[sentence_id][descendent]
-            .features()
-            .and_then(|f| f.get_val("id"))
-            .or_exit("Token missing id feature", 1)
-            .or_exit("Token missing value for id feature", 1);
-        let id = id.parse::<usize>().or_exit("invalid id value.", 1);
-        term_ids.push(id.to_string());
-    }
-    (sentence_id.to_string(), term_ids)
 }
 
 fn negra_ids(tree: &mut Tree) -> HashMap<String, NodeIndex> {
@@ -153,10 +139,6 @@ fn negra_ids(tree: &mut Tree) -> HashMap<String, NodeIndex> {
 
     // find nonterminals that don't dominate other nonterminals
     for (i, &terminal) in terminals.iter().enumerate() {
-        // terminals are sorted, annotate the IDs to prevent sorting twice
-        tree[terminal]
-            .features_mut()
-            .insert("id", Some(i.to_string()));
         // i+1 because root gets 0
         negra_id_to_node_idx.insert((i + 1).to_string(), terminal);
         visit_map.visit(terminal);
@@ -182,5 +164,5 @@ fn negra_ids(tree: &mut Tree) -> HashMap<String, NodeIndex> {
             }
         }
     }
-    return negra_id_to_node_idx;
+    negra_id_to_node_idx
 }
